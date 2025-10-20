@@ -1,27 +1,19 @@
 # app.py
 import streamlit as st
-import numpy as np
-import joblib
-import time
-from PIL import Image
-import cv2
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.preprocessing.image import img_to_array
+import joblib
+import numpy as np
+import cv2
 from streamlit.components.v1 import html
+import time
 
 # === Configuration ===
-IMG_SIZE = (224, 224)
 MODEL_PATH = "knn_model.pkl"
 
-# === Load KNN model ===
+# Load KNN model (precomputed features)
 model = joblib.load(MODEL_PATH)
 
-# === Load MobileNetV2 feature extractor ===
-feature_extractor = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
-
-# === Browser speech ===
+# === Browser speech function ===
 def speak_browser(text):
     js_code = f"""
     <script>
@@ -31,25 +23,16 @@ def speak_browser(text):
     """
     html(js_code)
 
-# === Extract features from frame ===
-def extract_frame_feature(frame):
-    image = cv2.resize(frame, IMG_SIZE)
-    image = img_to_array(image)
-    image = np.expand_dims(image, axis=0)
-    image = preprocess_input(image)
-    features = feature_extractor.predict(image)
-    return features[0]
-
 # === Streamlit UI ===
-st.title("🔍 Guiding Eye – Live Object Recognition")
-st.write("This app detects objects from your webcam live in the browser and speaks the result.")
+st.title("🔍 Guiding Eye – Live Object Recognition (KNN Only)")
+st.write("Detecting objects from your webcam live in the browser using KNN.")
 
-# Optional: WebRTC config for better browser compatibility
+# Optional WebRTC config
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-# === Video transformer for live processing ===
+# === Video transformer class ===
 class ObjectDetectionTransformer(VideoTransformerBase):
     def __init__(self):
         self.last_spoken = ""
@@ -58,11 +41,14 @@ class ObjectDetectionTransformer(VideoTransformerBase):
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
 
-        # Predict only once every 3 seconds
+        # Resize & flatten image to match KNN input shape
+        img_resized = cv2.resize(img, (224, 224))  # same as precomputed features
+        img_flat = img_resized.flatten().reshape(1, -1)
+
+        # Predict every 3 seconds
         if time.time() - self.last_time > 3:
             try:
-                feat = extract_frame_feature(img)
-                pred = model.predict([feat])[0]
+                pred = model.predict(img_flat)[0]
 
                 # Speak if new prediction
                 if pred != self.last_spoken:
@@ -71,7 +57,7 @@ class ObjectDetectionTransformer(VideoTransformerBase):
 
                 self.last_time = time.time()
             except Exception as e:
-                print("Detection error:", e)
+                print("Prediction error:", e)
 
         # Draw prediction on frame
         if self.last_spoken:

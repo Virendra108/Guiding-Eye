@@ -1,6 +1,7 @@
 streamlit
-opencv-python-headless
+streamlit-webrtc
 numpy
+opencv-python-headless
 scikit-learn
 joblib
 tensorflow

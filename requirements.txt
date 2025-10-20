@@ -6,3 +6,8 @@ scikit-learn
 joblib
 tensorflow
 pillow
+
+streamlit-TTS gtts pydub
+gtts
+pydub
+

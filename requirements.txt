@@ -11,3 +11,4 @@ pydub
 streamlit-TTS
 audioop-lts
 python-dotenv
+openai

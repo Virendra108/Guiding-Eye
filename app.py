@@ -25,7 +25,7 @@ def load_feature_extractor():
 
 feature_extractor = load_feature_extractor()
 
-# === Browser speech ===
+# === Browser speech function ===
 def speak_browser(text):
     js_code = f"""
     <script>
@@ -53,10 +53,15 @@ RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
+# === Initialize session state ===
+if "last_pred" not in st.session_state:
+    st.session_state.last_pred = ""
+if "spoken_pred" not in st.session_state:
+    st.session_state.spoken_pred = ""
+
 # === Video transformer class ===
 class ObjectDetectionTransformer(VideoTransformerBase):
     def __init__(self):
-        self.last_pred = ""
         self.last_time = 0
 
     def transform(self, frame):
@@ -68,18 +73,17 @@ class ObjectDetectionTransformer(VideoTransformerBase):
                 feat = extract_frame_feature(img)
                 pred = model.predict([feat])[0]
 
-                # Speak only if object changed
-                if pred != self.last_pred:
-                    speak_browser(pred)
-                    self.last_pred = pred
+                # Update session state if prediction changed
+                if pred != st.session_state.last_pred:
+                    st.session_state.last_pred = pred
 
                 self.last_time = time.time()
             except Exception as e:
                 print("Prediction error:", e)
 
         # Draw last prediction on frame
-        if self.last_pred:
-            cv2.putText(img, f"Detected: {self.last_pred}", (10, 30),
+        if st.session_state.last_pred:
+            cv2.putText(img, f"Detected: {st.session_state.last_pred}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         return img
@@ -92,3 +96,8 @@ webrtc_streamer(
     media_stream_constraints={"video": True, "audio": False},
     async_transform=True,
 )
+
+# === Browser speech outside video transformer ===
+if st.session_state.last_pred != st.session_state.spoken_pred:
+    speak_browser(st.session_state.last_pred)
+    st.session_state.spoken_pred = st.session_state.last_pred

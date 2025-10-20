@@ -9,3 +9,4 @@ pillow
 gtts
 pydub
 streamlit-TTS
+audioop-lts

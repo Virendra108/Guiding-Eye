@@ -4,11 +4,12 @@ from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfigura
 import joblib
 import numpy as np
 import cv2
-from streamlit.components.v1 import html
 import time
+import queue
 from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from tensorflow.keras.preprocessing.image import img_to_array
+from streamlit_TTS import auto_play, text_to_audio
 
 # === Configuration ===
 IMG_SIZE = (224, 224)
@@ -25,15 +26,20 @@ def load_feature_extractor():
 
 feature_extractor = load_feature_extractor()
 
-# === Browser speech function ===
-def speak_browser(text):
-    js_code = f"""
-    <script>
-        var msg = new SpeechSynthesisUtterance("{text}");
-        window.speechSynthesis.speak(msg);
-    </script>
-    """
-    html(js_code)
+# === Initialize session state ===
+if "last_prediction" not in st.session_state:
+    st.session_state.last_prediction = ""
+if "prediction_queue" not in st.session_state:
+    st.session_state.prediction_queue = queue.Queue()
+
+# === Python TTS function ===
+def speak_text(text):
+    """Convert text to speech and play automatically"""
+    try:
+        audio = text_to_audio(text, language='en')
+        auto_play(audio, wait=True, lag=0.25)
+    except Exception as e:
+        st.error(f"TTS Error: {e}")
 
 # === Extract features from frame ===
 def extract_frame_feature(frame):
@@ -44,24 +50,12 @@ def extract_frame_feature(frame):
     features = feature_extractor.predict(image)
     return features[0]
 
-# === Streamlit UI ===
-st.title("🔍 Guiding Eye – Live Object Recognition")
-st.write(f"Detecting objects from your webcam live (prediction every {COOLDOWN} sec)")
-
-# WebRTC configuration
-RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-)
-
-# === Initialize session state for speech ===
-if "spoken_pred" not in st.session_state:
-    st.session_state.spoken_pred = ""
-
-# === Video transformer class ===
+# === Video transformer with queue ===
 class ObjectDetectionTransformer(VideoTransformerBase):
     def __init__(self):
         self.last_time = 0
-        self.last_pred = ""  # keep last prediction internally
+        self.last_pred = ""
+        self.prediction_queue = st.session_state.prediction_queue
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
@@ -72,9 +66,11 @@ class ObjectDetectionTransformer(VideoTransformerBase):
                 feat = extract_frame_feature(img)
                 pred = model.predict([feat])[0]
 
-                # Update internal prediction if changed
+                # Update prediction if changed
                 if pred != self.last_pred:
                     self.last_pred = pred
+                    # Put new prediction in queue
+                    self.prediction_queue.put(pred)
 
                 self.last_time = time.time()
             except Exception as e:
@@ -87,6 +83,15 @@ class ObjectDetectionTransformer(VideoTransformerBase):
 
         return img
 
+# === Streamlit UI ===
+st.title("🔍 Guiding Eye – Live Object Recognition")
+st.write(f"Detecting objects from your webcam live (prediction every {COOLDOWN} sec)")
+
+# WebRTC configuration
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
+
 # === Start live webcam streaming ===
 webrtc_ctx = webrtc_streamer(
     key="guiding-eye",
@@ -96,9 +101,18 @@ webrtc_ctx = webrtc_streamer(
     async_transform=True,
 )
 
-# === Trigger browser speech in main thread ===
-if webrtc_ctx.video_transformer:
-    current_pred = webrtc_ctx.video_transformer.last_pred
-    if current_pred and st.session_state.spoken_pred != current_pred:
-        speak_browser(current_pred)
-        st.session_state.spoken_pred = current_pred
+# === Process predictions from queue and trigger TTS ===
+if not st.session_state.prediction_queue.empty():
+    try:
+        new_pred = st.session_state.prediction_queue.get_nowait()
+        if new_pred != st.session_state.last_prediction:
+            st.session_state.last_prediction = new_pred
+            # Speak the prediction
+            speak_text(f"Detected {new_pred}")
+            st.rerun()
+    except queue.Empty:
+        pass
+
+# Display current prediction
+if st.session_state.last_prediction:
+    st.success(f"📢 Current detection: {st.session_state.last_prediction}")

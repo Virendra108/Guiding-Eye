@@ -13,78 +13,64 @@ from tensorflow.keras.preprocessing.image import img_to_array
 # === Configuration ===
 IMG_SIZE = (224, 224)
 MODEL_PATH = "knn_model.pkl"
-COOLDOWN = 5  # seconds between predictions
+COOLDOWN = 5  # seconds
 
 # === Load KNN model ===
 model = joblib.load(MODEL_PATH)
 
-# === Cache MobileNetV2 feature extractor to prevent reloading each rerun ===
+# === Cache MobileNetV2 feature extractor ===
 @st.cache_resource
 def load_feature_extractor():
     return MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
 
 feature_extractor = load_feature_extractor()
 
-# === Browser speech ===
-def speak_browser(text):
-    js_code = f"""
-    <script>
-        var msg = new SpeechSynthesisUtterance("{text}");
-        window.speechSynthesis.speak(msg);
-    </script>
-    """
-    html(js_code)
-
-# === Extract features from frame ===
-def extract_frame_feature(frame):
-    image = cv2.resize(frame, IMG_SIZE)
-    image = img_to_array(image)
-    image = np.expand_dims(image, axis=0)
-    image = preprocess_input(image)
-    features = feature_extractor.predict(image)
-    return features[0]
-
 # === Streamlit UI ===
 st.title("🔍 Guiding Eye – Live Object Recognition")
 st.write(f"Detecting objects from your webcam live (prediction every {COOLDOWN} sec)")
 
-# WebRTC configuration for better browser compatibility
+# Use session state to store last prediction for speech
+if "last_pred" not in st.session_state:
+    st.session_state.last_pred = ""
+if "last_time" not in st.session_state:
+    st.session_state.last_time = 0
+
+# WebRTC configuration
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-# === Video transformer class ===
+# === Transformer ===
 class ObjectDetectionTransformer(VideoTransformerBase):
-    def __init__(self):
-        self.last_spoken = ""
-        self.last_time = 0
-
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
 
         # Predict every COOLDOWN seconds
-        if time.time() - self.last_time > COOLDOWN:
+        if time.time() - st.session_state.last_time > COOLDOWN:
             try:
-                feat = extract_frame_feature(img)
-                pred = model.predict([feat])[0]
+                # Extract features and predict
+                image = cv2.resize(img, IMG_SIZE)
+                image = img_to_array(image)
+                image = np.expand_dims(image, axis=0)
+                image = preprocess_input(image)
+                features = feature_extractor.predict(image)
+                pred = model.predict([features[0]])[0]
 
-                # Speak if new prediction
-                if pred != self.last_spoken:
-                    speak_browser(pred)
-                    self.last_spoken = pred
+                # Update session state
+                st.session_state.last_pred = pred
+                st.session_state.last_time = time.time()
 
-                self.last_time = time.time()
             except Exception as e:
                 print("Prediction error:", e)
 
-        # Draw prediction on frame
-        if self.last_spoken:
-            cv2.putText(img, f"Detected: {self.last_spoken}", (10, 30),
+        # Draw last prediction on frame
+        if st.session_state.last_pred:
+            cv2.putText(img, f"Detected: {st.session_state.last_pred}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         return img
 
-# === Start live webcam streaming ===
+# === Start live webcam ===
 webrtc_streamer(
     key="guiding-eye",
     video_transformer_factory=ObjectDetectionTransformer,
@@ -92,3 +78,13 @@ webrtc_streamer(
     media_stream_constraints={"video": True, "audio": False},
     async_transform=True,
 )
+
+# === Trigger browser speech outside transformer ===
+if st.session_state.last_pred:
+    st.experimental_rerun()  # Ensure Streamlit updates JS
+    html(f"""
+    <script>
+        var msg = new SpeechSynthesisUtterance("{st.session_state.last_pred}");
+        window.speechSynthesis.speak(msg);
+    </script>
+    """)

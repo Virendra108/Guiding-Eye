@@ -53,9 +53,7 @@ RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-# === Initialize session state ===
-if "last_pred" not in st.session_state:
-    st.session_state.last_pred = ""
+# === Initialize session state for speech ===
 if "spoken_pred" not in st.session_state:
     st.session_state.spoken_pred = ""
 
@@ -63,6 +61,7 @@ if "spoken_pred" not in st.session_state:
 class ObjectDetectionTransformer(VideoTransformerBase):
     def __init__(self):
         self.last_time = 0
+        self.last_pred = ""  # keep last prediction internally
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
@@ -73,23 +72,23 @@ class ObjectDetectionTransformer(VideoTransformerBase):
                 feat = extract_frame_feature(img)
                 pred = model.predict([feat])[0]
 
-                # Update session state if prediction changed
-                if pred != st.session_state.last_pred:
-                    st.session_state.last_pred = pred
+                # Update internal prediction if changed
+                if pred != self.last_pred:
+                    self.last_pred = pred
 
                 self.last_time = time.time()
             except Exception as e:
                 print("Prediction error:", e)
 
-        # Draw last prediction on frame
-        if st.session_state.last_pred:
-            cv2.putText(img, f"Detected: {st.session_state.last_pred}", (10, 30),
+        # Draw prediction on frame
+        if self.last_pred:
+            cv2.putText(img, f"Detected: {self.last_pred}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         return img
 
 # === Start live webcam streaming ===
-webrtc_streamer(
+webrtc_ctx = webrtc_streamer(
     key="guiding-eye",
     video_transformer_factory=ObjectDetectionTransformer,
     rtc_configuration=RTC_CONFIGURATION,
@@ -97,7 +96,9 @@ webrtc_streamer(
     async_transform=True,
 )
 
-# === Browser speech outside video transformer ===
-if st.session_state.last_pred != st.session_state.spoken_pred:
-    speak_browser(st.session_state.last_pred)
-    st.session_state.spoken_pred = st.session_state.last_pred
+# === Trigger browser speech in main thread ===
+if webrtc_ctx.video_transformer:
+    current_pred = webrtc_ctx.video_transformer.last_pred
+    if current_pred and st.session_state.spoken_pred != current_pred:
+        speak_browser(current_pred)
+        st.session_state.spoken_pred = current_pred

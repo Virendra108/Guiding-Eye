@@ -17,7 +17,7 @@ MODEL_PATH = "knn_model.pkl"
 
 # === Load models ===
 model = joblib.load(MODEL_PATH)
-feature_extractor = MobileNetV2(weights=None, include_top=False, pooling="avg")
+feature_extractor = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
 
 # === Browser speech function ===
 def speak_browser(text):
@@ -84,4 +84,5 @@ webrtc_streamer(
     media_stream_constraints={"video": True, "audio": False},
     async_transform=True,
 )
+
 

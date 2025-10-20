@@ -6,14 +6,26 @@ import numpy as np
 import cv2
 from streamlit.components.v1 import html
 import time
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.preprocessing.image import img_to_array
 
 # === Configuration ===
+IMG_SIZE = (224, 224)
 MODEL_PATH = "knn_model.pkl"
+COOLDOWN = 5  # seconds between predictions
 
-# Load KNN model (precomputed features)
+# === Load KNN model ===
 model = joblib.load(MODEL_PATH)
 
-# === Browser speech function ===
+# === Cache MobileNetV2 feature extractor to prevent reloading each rerun ===
+@st.cache_resource
+def load_feature_extractor():
+    return MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
+
+feature_extractor = load_feature_extractor()
+
+# === Browser speech ===
 def speak_browser(text):
     js_code = f"""
     <script>
@@ -23,11 +35,20 @@ def speak_browser(text):
     """
     html(js_code)
 
-# === Streamlit UI ===
-st.title("🔍 Guiding Eye – Live Object Recognition (KNN Only)")
-st.write("Detecting objects from your webcam live in the browser using KNN.")
+# === Extract features from frame ===
+def extract_frame_feature(frame):
+    image = cv2.resize(frame, IMG_SIZE)
+    image = img_to_array(image)
+    image = np.expand_dims(image, axis=0)
+    image = preprocess_input(image)
+    features = feature_extractor.predict(image)
+    return features[0]
 
-# Optional WebRTC config
+# === Streamlit UI ===
+st.title("🔍 Guiding Eye – Live Object Recognition")
+st.write(f"Detecting objects from your webcam live (prediction every {COOLDOWN} sec)")
+
+# WebRTC configuration for better browser compatibility
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
@@ -41,14 +62,11 @@ class ObjectDetectionTransformer(VideoTransformerBase):
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
 
-        # Resize & flatten image to match KNN input shape
-        img_resized = cv2.resize(img, (224, 224))  # same as precomputed features
-        img_flat = img_resized.flatten().reshape(1, -1)
-
-        # Predict every 3 seconds
-        if time.time() - self.last_time > 3:
+        # Predict every COOLDOWN seconds
+        if time.time() - self.last_time > COOLDOWN:
             try:
-                pred = model.predict(img_flat)[0]
+                feat = extract_frame_feature(img)
+                pred = model.predict([feat])[0]
 
                 # Speak if new prediction
                 if pred != self.last_spoken:

@@ -15,11 +15,13 @@ from streamlit.components.v1 import html
 IMG_SIZE = (224, 224)
 MODEL_PATH = "knn_model.pkl"
 
-# === Load models ===
+# === Load KNN model ===
 model = joblib.load(MODEL_PATH)
+
+# === Load MobileNetV2 feature extractor ===
 feature_extractor = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
 
-# === Browser speech function ===
+# === Browser speech ===
 def speak_browser(text):
     js_code = f"""
     <script>
@@ -29,7 +31,7 @@ def speak_browser(text):
     """
     html(js_code)
 
-# === Feature extraction function ===
+# === Extract features from frame ===
 def extract_frame_feature(frame):
     image = cv2.resize(frame, IMG_SIZE)
     image = img_to_array(image)
@@ -40,7 +42,7 @@ def extract_frame_feature(frame):
 
 # === Streamlit UI ===
 st.title("🔍 Guiding Eye – Live Object Recognition")
-st.write("This app detects objects live from your webcam and speaks the result automatically.")
+st.write("This app detects objects from your webcam live in the browser and speaks the result.")
 
 # Optional: WebRTC config for better browser compatibility
 RTC_CONFIGURATION = RTCConfiguration(
@@ -51,28 +53,30 @@ RTC_CONFIGURATION = RTCConfiguration(
 class ObjectDetectionTransformer(VideoTransformerBase):
     def __init__(self):
         self.last_spoken = ""
-        self.last_time = time.time()
+        self.last_time = 0
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
 
-        # Predict
-        try:
-            feat = extract_frame_feature(img)
-            pred = model.predict([feat])[0]
+        # Predict only once every 3 seconds
+        if time.time() - self.last_time > 3:
+            try:
+                feat = extract_frame_feature(img)
+                pred = model.predict([feat])[0]
 
-            # Speak only if new & 3s passed
-            if pred != self.last_spoken and time.time() - self.last_time > 3:
-                speak_browser(pred)
-                self.last_spoken = pred
+                # Speak if new prediction
+                if pred != self.last_spoken:
+                    speak_browser(pred)
+                    self.last_spoken = pred
+
                 self.last_time = time.time()
+            except Exception as e:
+                print("Detection error:", e)
 
-            # Display prediction on frame
-            cv2.putText(img, f"Detected: {pred}", (10, 30),
+        # Draw prediction on frame
+        if self.last_spoken:
+            cv2.putText(img, f"Detected: {self.last_spoken}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        except Exception as e:
-            cv2.putText(img, f"Error", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
         return img
 
@@ -84,5 +88,3 @@ webrtc_streamer(
     media_stream_constraints={"video": True, "audio": False},
     async_transform=True,
 )
-
-

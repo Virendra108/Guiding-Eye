@@ -8,5 +8,4 @@ tensorflow
 pillow
 gtts
 pydub
-
-
+streamlit-TTS
